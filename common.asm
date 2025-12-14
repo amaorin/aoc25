@@ -1,5 +1,20 @@
 section .text
 
+strlen: ; u64 strlen(u8* str)
+	xor rax, rax
+	
+	test rdi, rdi
+	jz strlen_end
+
+	strlen_loop:
+		cmp BYTE [rdi + rax], 0
+		je strlen_end
+		inc rax
+		jmp strlen_loop
+	
+	strlen_end:
+	ret
+
 write_string: ; u64 write_string(u8* buf, u64 cap, u8* str, u64 len)
 
 	; to_write = (len > cap ? cap : len)
@@ -182,3 +197,187 @@ print_results_buffer_cap equ (5*16)
 %if print_results_buffer_cap < print_results_results_1_text_len + 1 + 19 + print_results_results_2_text_len + 1 + 19
 %error "print_results_buffer_cap is too small"
 %endif
+
+section .text
+
+read_input: ; void read_input(u8* rsp, u8** input, u64* input_len)
+	push r12
+	push r13
+	push r14
+
+	sub rsp, 0x10
+	mov QWORD [rsp + 0], rsi
+	mov QWORD [rsp + 8], rdx
+
+	mov r12, rdi
+
+	mov r13d, DWORD [r12]
+	cmp r13, 2
+	je read_input_correct_num_args
+		mov rdi, read_input_invalid_num_args_prefix
+		mov rsi, read_input_invalid_num_args_prefix_len
+		call print_string
+
+		mov r13, QWORD [r12 + 8]
+		mov rdi, r13
+		call strlen
+
+		mov rdi, r13
+		mov rsi, rax
+		call print_string
+
+		mov rdi, read_input_invalid_num_args_suffix
+		mov rsi, read_input_invalid_num_args_suffix_len
+		call print_string
+
+		mov rax, 60 ; sys_exit
+		mov rdi, 1  ; error code
+		syscall
+	read_input_correct_num_args:
+
+	mov r12, QWORD [r12 + 16]
+
+	mov rax, 2   ; sys_open
+	mov rdi, r12 ; path
+	mov rsi, 0   ; 1 O_RDONLY
+	mov rdx, 0   ; no flags
+	syscall
+
+	test rax, rax
+	jns read_input_opened_file
+		mov rdi, read_input_failed_to_open_file_prefix
+		mov rsi, read_input_failed_to_open_file_prefix_len
+		call print_string
+
+		mov rdi, r12
+		call strlen
+
+		mov rdi, r12
+		mov rsi, rax
+		call print_string
+
+		mov rdi, read_input_failed_to_open_file_suffix
+		mov rsi, read_input_failed_to_open_file_suffix_len
+		call print_string
+
+		mov rax, 60 ; sys_exit
+		mov rdi, 1  ; error code
+		syscall
+	read_input_opened_file:
+
+	mov r12, rax
+
+	sub rsp, 0x100
+	mov rax, 5   ; sys_fstat
+	mov rdi, r12 ; fd
+	mov rsi, rsp ; sglkdhjfglkj
+	syscall
+	mov r13, QWORD [rsp + 48]
+	add rsp, 0x100
+
+	mov r8, r13
+	add r8, 4095
+	and r8, -4096
+	mov rax, 9  ; sys_mmap
+	mov rdi, 0
+	mov rsi, r8 ; size
+	mov rdx, 3  ; PROT_READ | PROT_WRITE
+	mov r10, 0x22  ; MAP_ANONYMOUS | MAP_PRIVATE
+	mov r8, -1
+	mov r9, 0
+	syscall
+
+	cmp rax, -1
+	jne read_input_map_succeeded
+		 ; TODO error message
+
+		mov rax, 60 ; sys_exit
+		mov rdi, 1  ; error code
+		syscall
+	read_input_map_succeeded:
+
+	mov r14, rax
+
+	mov rax, 0   ; sys_read
+	mov rdi, r12 ; fd
+	mov rsi, r14 ; buf
+	mov rdx, r13 ; len
+	syscall
+
+	cmp rax, -1
+	jne read_input_read_succeeded
+		 ; TODO error message
+
+		mov rax, 60 ; sys_exit
+		mov rdi, 1  ; error code
+		syscall
+	read_input_read_succeeded:
+
+	mov r8, QWORD [rsp + 0]
+	mov r9, QWORD [rsp + 8]
+
+	mov QWORD [r8], r14
+	mov QWORD [r9], r13
+
+	mov rax, 3   ; sys_close
+	mov rdi, r12 ; fd
+	syscall
+
+	add rsp, 0x10
+	pop r12
+	pop r13
+	pop r14
+	ret
+
+section .data
+read_input_invalid_num_args_prefix db "Invalid number of arguments. Expected: "
+read_input_invalid_num_args_prefix_len equ $ - read_input_invalid_num_args_prefix
+read_input_invalid_num_args_suffix db " [input file]", 0x0A
+read_input_invalid_num_args_suffix_len equ $ - read_input_invalid_num_args_suffix
+read_input_failed_to_open_file_prefix db "Failed to open file '"
+read_input_failed_to_open_file_prefix_len equ $ - read_input_failed_to_open_file_prefix
+read_input_failed_to_open_file_suffix db "'", 0x0A
+read_input_failed_to_open_file_suffix_len equ $ - read_input_failed_to_open_file_suffix
+
+section .text
+
+eat_whitespace: ; u64 eat_whitespace(u8* input, u64 len)
+	xor rax, rax
+
+	eat_whitespace_loop:
+		cmp rax, rsi
+		jge eat_whitespace_loop_end
+		movzx r8, BYTE [rdi + rax]
+
+		dec r8
+		cmp r8, 0x20
+		jae eat_whitespace_loop_end
+
+		inc rax
+		jmp eat_whitespace_loop
+	eat_whitespace_loop_end:
+
+	ret
+
+eat_s64: ; struct { u64 advancement; s64 num } eat_s64(u8* input, u64 len)
+	xor rax, rax
+	xor rdx, rdx
+
+	eat_s64_loop:
+		cmp rax, rsi
+		jge eat_s64_loop_end
+
+		movzx r8, BYTE [rdi + rax]
+
+		sub r8, '0'
+		cmp r8, 10
+		jae eat_s64_loop_end
+
+		imul rdx, rdx, 10
+		add rdx, r8
+
+		inc rax
+		jmp eat_s64_loop
+	eat_s64_loop_end:
+
+	ret
