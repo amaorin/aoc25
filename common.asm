@@ -272,6 +272,18 @@ read_input: ; void read_input(u8* rsp, u8** input, u64* input_len)
 	mov rdi, r12 ; fd
 	mov rsi, rsp ; sglkdhjfglkj
 	syscall
+
+	cmp rax, -1
+	jne read_input_fstat_succeeded
+		mov rdi, read_input_fstat_failed_msg
+		mov rdi, read_input_fstat_failed_msg_len
+		call print_string
+
+		mov rax, 60 ; sys_exit
+		mov rdi, 1  ; error code
+		syscall
+	read_input_fstat_succeeded:
+
 	mov r13, QWORD [rsp + 48]
 	add rsp, 0x100
 
@@ -289,7 +301,9 @@ read_input: ; void read_input(u8* rsp, u8** input, u64* input_len)
 
 	cmp rax, -1
 	jne read_input_map_succeeded
-		 ; TODO error message
+		mov rdi, read_input_map_failed_msg
+		mov rsi, read_input_map_failed_msg_len
+		call print_string
 
 		mov rax, 60 ; sys_exit
 		mov rdi, 1  ; error code
@@ -306,7 +320,9 @@ read_input: ; void read_input(u8* rsp, u8** input, u64* input_len)
 
 	cmp rax, -1
 	jne read_input_read_succeeded
-		 ; TODO error message
+		mov rdi, read_input_read_failed_msg
+		mov rsi, read_input_read_failed_msg_len
+		call print_string
 
 		mov rax, 60 ; sys_exit
 		mov rdi, 1  ; error code
@@ -338,6 +354,12 @@ read_input_failed_to_open_file_prefix db "Failed to open file '"
 read_input_failed_to_open_file_prefix_len equ $ - read_input_failed_to_open_file_prefix
 read_input_failed_to_open_file_suffix db "'", 0x0A
 read_input_failed_to_open_file_suffix_len equ $ - read_input_failed_to_open_file_suffix
+read_input_fstat_failed_msg db "Failed to fstat input file", 0x0A
+read_input_fstat_failed_msg_len equ $ - read_input_fstat_failed_msg
+read_input_map_failed_msg db "Failed to map memory for input file", 0x0A
+read_input_map_failed_msg_len equ $ - read_input_map_failed_msg
+read_input_read_failed_msg db "Failed to read input file", 0x0A
+read_input_read_failed_msg_len equ $ - read_input_read_failed_msg
 
 section .text
 
@@ -363,21 +385,50 @@ eat_s64: ; struct { u64 advancement; s64 num } eat_s64(u8* input, u64 len)
 	xor rax, rax
 	xor rdx, rdx
 
-	eat_s64_loop:
+	.loop:
 		cmp rax, rsi
-		jge eat_s64_loop_end
+		jge .loop_end
 
 		movzx r8, BYTE [rdi + rax]
 
 		sub r8, '0'
 		cmp r8, 10
-		jae eat_s64_loop_end
+		jae .loop_end
 
 		imul rdx, rdx, 10
 		add rdx, r8
 
 		inc rax
-		jmp eat_s64_loop
-	eat_s64_loop_end:
+		jmp .loop
+	.loop_end:
 
+	ret
+
+section .text
+
+; n = 0 => 1
+ilog10: ; u64 ilog10(u64 n)
+	mov r8, -1
+	mov rax, rdi
+	mov r9, 10
+	.loop:
+		xor rdx, rdx
+		idiv r9
+		inc r8
+		test rax, rax
+		jnz .loop
+
+	mov rax, r8
+	ret
+
+ipow10: ; u64 ipow10(u64 n)
+	mov rax, 1
+	.loop:
+		test rdi, rdi
+		jz .loop_end
+
+		imul rax, rax, 10
+		dec rdi
+		jmp .loop
+	.loop_end:
 	ret
